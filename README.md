@@ -2,11 +2,18 @@
 
 Prototype TSP solver for the research project featuring Streamlit interactive Web Dashboard and Tkinter desktop UI.
 
+📄 **Documentation**:
+- 📌 [Problem Statement & Research Specifications](PROBLEM_STATEMENT.md)
+- 🚀 [Phase-Wise Development Report](PHASE_REPORT.md)
+
 ## Structure
 
 ```
 quantum-logistics/
+├── PROBLEM_STATEMENT.md       # Research problem specification & architecture
+├── PHASE_REPORT.md            # Phase-by-phase implementation progress & roadmap
 ├── main.py                    # Entry point (launches Streamlit web server)
+
 ├── algorithms/                # TSP solvers
 │   ├── tsp_bruteforce.py      # Brute-force solver (exact)
 │   ├── genetic_algorithm.py   # Genetic Algorithm evolutionary solver
