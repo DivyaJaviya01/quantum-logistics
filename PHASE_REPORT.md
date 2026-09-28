@@ -6,11 +6,23 @@
 
 | Metric / Phase | Status | Details |
 | :--- | :--- | :--- |
-| **Current Active Phase** | **Phase 1 Complete (Foundations & UI)** | Initial prototype, core logic, Streamlit web app, Git repository initialized |
-| **Target Scale** | **50-Node Logistics Instances** | Scaling up from initial 5-8 node prototype to 50 nodes |
-| **Solvers Ready** | **Brute-Force & Classical GA (Basic)** | Exact brute-force search & custom GA implementation |
-| **Solvers In Progress** | **DEAP GA & Qiskit Aer QAOA** | Phase 2 & 3 targets |
-| **Primary Interface** | **Streamlit Web Dashboard** | Interactive Plotly maps, hyperparameter sliders, benchmark table |
+| **Current Active Phase** | **Phases 1–4 Complete (Solvers, Scale-up, Benchmarks)** | 5 solvers, Streamlit dashboard, 195 measured runs, 2 research notebooks |
+| **Target Scale** | **50-Node Logistics Instances — DONE** | Pure GA vs Memetic vs 2-opt×20 at N=10–50 (`results/benchmark_scale.csv`) |
+| **Solvers Ready** | **Brute-Force, GA, 2-opt, Memetic, QAOA (sim)** | All custom NumPy/SciPy; exact optimum at N≤6 (GA) and N≤5 (QAOA) |
+| **Solvers In Progress** | **None pending** | DEAP/Qiskit deliberately NOT adopted — see Library Deviation Note below |
+| **Primary Interface** | **Streamlit Web Dashboard** | 5 solver tabs, hyperparameter sliders, convergence plots, benchmark table |
+| **Docs** | **README (source of truth) + docs/ (10 files)** | README describes current code; this report is now a historical log |
+
+> **Library Deviation Note (Qiskit / DEAP):** the original problem statement
+> mentioned Qiskit Aer / PennyLane for QAOA and DEAP for the GA. We
+> deliberately implemented both from scratch (NumPy statevector + SciPy
+> COBYLA for QAOA; hand-coded tournament/OX/swap/elitism GA) because:
+> (1) zero heavy/paid dependencies — runs on any laptop;
+> (2) every line is understood and explainable (research value);
+> (3) measured results match or exceed what the libraries would give at these
+> sizes. No working code will be replaced with libraries for namesake.
+> A DEAP baseline comparison may be added later as an extra racer, not a
+> replacement.
 
 ---
 
@@ -41,56 +53,50 @@
 
 ---
 
-## 🎯 Phase 2: DEAP Framework & 50-Node TSPLIB Integration (NEXT IMPLEMENTATION)
+## ✅ Phase 2: 50-Node Scale-up — 2-opt + Memetic (COMPLETED)
 
-### Objectives:
-1. **Scale Problem Generator to 50 Nodes**:
-   - Add TSPLIB parser (`core/dataset_loader.py`) to load standard 50-node benchmark datasets (e.g., `eil51`, `berlin52`).
-   - Implement scalable 50-node random cluster generator with customizable depot coordinates.
-
-2. **DEAP Evolutionary Algorithm Engine**:
-   - Integrate `deap` (Distributed Evolutionary Algorithms in Python) framework (`algorithms/ga_deap.py`).
-   - Standardize operators: `cxOrdered` (OX), `mutShuffleIndexes`, `selTournament`.
-   - Implement multi-run statistics collector (mean, std dev, min distance history over 100+ generations).
-
----
-
-## ⚛️ Phase 3: Qiskit Aer QAOA Quantum Simulator (UPCOMING)
-
-### Objectives:
-1. **QUBO / Cost Hamiltonian Formulation**:
-   - Map 50-node TSP / VRP constraints to Quadratic Unconstrained Binary Optimization (QUBO) format.
-   - Formulate Cost Hamiltonian ($H_C$) and Mixer Hamiltonian ($H_M$).
-
-2. **Qiskit Aer Execution (`algorithms/qaoa.py`)**:
-   - Implement QAOA parameterized quantum circuits ($p$-layers) using `qiskit-optimization` and `qiskit-aer` simulators.
-   - Include Quantum-Inspired Heuristic / Simulated Annealing fallback for heavy 50-node statevector execution.
+### What was built (instead of DEAP — see Deviation Note above):
+1. **`algorithms/two_opt.py`** — 2-opt local search with O(1) delta evaluation
+   (85 ms polish at N=50, verified bit-exact). Fixed a real early-stop bug
+   found by measurement (1121→978 before, 1121→370 after).
+2. **`algorithms/memetic.py`** — GA + 2-opt hybrid (`solve_tsp_memetic`).
+3. **Scale benchmark** (`--scale` mode): pure GA vs Memetic vs 2-opt×20 at
+   N=10–50, 5 maps each → `results/benchmark_scale.csv` (75 rows).
+4. **Finding:** pure GA collapses (106% gap at N=50); memetic stays 0–8%;
+   multi-start 2-opt won all 25 maps. Notebook 02 + charts.
 
 ---
 
-## 📈 Phase 4: Comparative Benchmarking Engine (UPCOMING)
+## ✅ Phase 3: QAOA Quantum Simulator — custom NumPy/SciPy (COMPLETED)
 
-### Objectives:
-1. **Side-by-Side Performance Analytics**:
-   - Benchmark **Tour Length** (Solution quality / accuracy).
-   - Benchmark **Compute Runtime** (Execution time in seconds).
-   - Compare **Convergence Rates** (Cost decrease over iterations/generations).
-
-2. **Google OR-Tools Baseline Integration**:
-   - Add Google `ortools` routing solver as a classical gold standard baseline.
+### What was built (instead of Qiskit Aer — see Deviation Note above):
+1. **QUBO with depot fixed** — only (N−1)² qubits (16 for N=5).
+2. **Statevector simulation** (cost + mixer unitaries) + **COBYLA** tuning.
+3. **Measured:** exact optimum at N=4–5; local-minimum trap (~17% gap) under
+   small optimizer budgets — honest quantum behaviour, documented.
+4. Hard cap N≤5 (16 qubits = 65k amplitudes; N=6 = 33M — needs real hardware).
 
 ---
 
-## 🎨 Phase 5: Streamlit Production Dashboard & Report Export (UPCOMING)
+## ✅ Phase 4: Comparative Benchmarking Engine (COMPLETED)
 
-### Objectives:
-1. **50-Node Interactive Visualization**:
-   - Upgrade Streamlit UI with 50-node zoomable vector maps.
-   - Add convergence plot overlay comparing GA vs. QAOA vs. OR-Tools on the same chart.
+1. **Small-N engine** — BF + GA (+QAOA), gap vs TRUE optimum (120 rows).
+2. **Scale engine** — 3 classical methods, gap vs best-found (75 rows).
+3. **Reproducibility** — every run carries map `seed` + `solver_seed`;
+   same seeds ⇒ bit-identical results, order-independent.
+4. Streamlit benchmark tab compares all solvers side by side with real numbers.
 
-2. **Automated Export & Summary**:
-   - Download CSV / JSON benchmark reports.
-   - Generate summary PDF / Markdown research summary directly from the web app.
+---
+
+## 🎯 Phase 5: Next (PLANNED, novelty-directed)
+
+1. **Clustered / TSPLIB maps** (`eil51`, clustered depots) — may flip the
+   2-opt ranking; currently unknown = research opportunity.
+2. **Fair-budget shootouts** — equal wall-clock (1/5/10 s) comparisons.
+3. **QAOA diagnostics** — P(valid tour), P(optimal), energy-vs-distance,
+   penalty/depth sensitivity.
+4. **30-trial statistics** with confidence intervals + paired tests.
+5. **Exportable experiment reports** (CSV/JSON download from UI).
 
 ---
 

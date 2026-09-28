@@ -13,7 +13,7 @@ from algorithms.two_opt import two_opt_improve
 
 
 def solve_tsp_memetic(cities, population_size=100, generations=200,
-                      mutation_rate=0.05, polish_every=0):
+                      mutation_rate=0.05, polish_every=0, seed=None):
     """Solve TSP with GA, then polish the winner with 2-opt.
 
     Args:
@@ -21,11 +21,14 @@ def solve_tsp_memetic(cities, population_size=100, generations=200,
         population_size, generations, mutation_rate: GA settings.
         polish_every: if > 0, also 2-opt-polish the elite every K
             generations (slower but stronger). 0 = polish only at the end.
+        seed: random seed for the GA phase (2-opt is deterministic).
+            Same seed + same cities = same result.
 
     Returns:
         Tuple (best_route, best_distance, info) where info holds
         ga_distance (before polish), sweeps_used, and ga history.
     """
+    import random
     from algorithms.genetic_algorithm import (
         create_initial_population, evaluate_population,
         tournament_selection, order_crossover, swap_mutation,
@@ -33,17 +36,18 @@ def solve_tsp_memetic(cities, population_size=100, generations=200,
     )
 
     n = len(cities)
+    rng = random.Random(seed) if seed is not None else random
 
     if polish_every <= 0:
         # Simple mode: full GA run, then one 2-opt polish at the end
         ga_route, ga_dist, history = solve_tsp_genetic(
             cities, population_size=population_size,
-            generations=generations, mutation_rate=mutation_rate)
+            generations=generations, mutation_rate=mutation_rate, seed=seed)
         best_route, best_dist, sweeps = two_opt_improve(cities, ga_route)
     else:
         # Strong mode: polish the elite every K generations (Lamarckian:
         # the polished route re-enters the population)
-        population = create_initial_population(n, population_size)
+        population = create_initial_population(n, population_size, rng)
         best_ever_route, best_ever_distance = None, float("inf")
         history = []
         for gen in range(generations):
@@ -58,10 +62,10 @@ def solve_tsp_memetic(cities, population_size=100, generations=200,
             history.append(best_ever_distance)
             new_population = [list(gen_best_route)]
             while len(new_population) < population_size:
-                p1 = tournament_selection(scored)
-                p2 = tournament_selection(scored)
+                p1 = tournament_selection(scored, rng=rng)
+                p2 = tournament_selection(scored, rng=rng)
                 child = swap_mutation(
-                    order_crossover(p1, p2), mutation_rate)
+                    order_crossover(p1, p2, rng=rng), mutation_rate, rng=rng)
                 if is_valid_route(child, n):
                     new_population.append(child)
             population = new_population

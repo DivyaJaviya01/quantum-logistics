@@ -1,6 +1,7 @@
 """Genetic Algorithm TSP solver."""
 
 import random
+from types import ModuleType
 from core.distance import calculate_distance
 
 
@@ -28,7 +29,7 @@ def is_valid_route(route, n):
     return True
 
 
-def create_random_route(n):
+def create_random_route(n, rng: random.Random | ModuleType = random):
     """Create a random valid route starting at city 0.
 
     Generates a random permutation of cities 1..n-1,
@@ -36,28 +37,30 @@ def create_random_route(n):
 
     Args:
         n: total number of cities.
+        rng: random source (module or random.Random instance).
 
     Returns:
         A list of city indices representing a valid route.
     """
     route = list(range(1, n))
-    random.shuffle(route)
+    rng.shuffle(route)
     return [0] + route
 
 
-def create_initial_population(n, population_size):
+def create_initial_population(n, population_size, rng: random.Random | ModuleType = random):
     """Generate an initial population of random valid routes.
 
     Args:
         n: total number of cities.
         population_size: number of routes to generate.
+        rng: random source (module or random.Random instance).
 
     Returns:
         A list of routes (each route is a list of city indices).
     """
     population = []
     for _ in range(population_size):
-        route = create_random_route(n)
+        route = create_random_route(n, rng)
         population.append(route)
     return population
 
@@ -83,7 +86,7 @@ def evaluate_population(population, cities):
     return scored
 
 
-def tournament_selection(scored_population, tournament_size=3):
+def tournament_selection(scored_population, tournament_size=3, rng: random.Random | ModuleType = random):
     """Select one parent using tournament selection.
 
     Picks tournament_size random routes from the population,
@@ -92,16 +95,18 @@ def tournament_selection(scored_population, tournament_size=3):
     Args:
         scored_population: list of (route, fitness) tuples.
         tournament_size: number of routes in each tournament.
+        rng: random source (module or random.Random instance).
 
     Returns:
         The winning route (list of city indices).
     """
-    tournament = random.sample(scored_population, tournament_size)
+    tournament = rng.sample(scored_population, tournament_size)
     winner = max(tournament, key=lambda x: x[1])
     return winner[0]
 
 
-def order_crossover(parent1, parent2):
+def order_crossover(parent1: list, parent2: list,
+                    rng: random.Random | ModuleType = random) -> list:
     """Perform Order Crossover (OX) on two parent routes.
 
     OX preserves a segment from parent1 and fills remaining
@@ -111,13 +116,14 @@ def order_crossover(parent1, parent2):
     Args:
         parent1: first parent route (list of city indices).
         parent2: second parent route (list of city indices).
+        rng: random source (module or random.Random instance).
 
     Returns:
         A child route (list of city indices).
     """
     n = len(parent1)
     # Choose two random cut points (start < end)
-    start, end = sorted(random.sample(range(n), 2))
+    start, end = sorted(rng.sample(range(n), 2))
 
     # Step 1: Copy segment from parent1
     child = [None] * n
@@ -137,7 +143,7 @@ def order_crossover(parent1, parent2):
     return child
 
 
-def swap_mutation(route, mutation_rate):
+def swap_mutation(route, mutation_rate, rng: random.Random | ModuleType = random):
     """Apply swap mutation to a route with given probability.
 
     With probability mutation_rate, selects two random positions
@@ -146,18 +152,20 @@ def swap_mutation(route, mutation_rate):
     Args:
         route: list of city indices.
         mutation_rate: probability of mutation (0.0 to 1.0).
+        rng: random source (module or random.Random instance).
 
     Returns:
         The (possibly mutated) route.
     """
-    if random.random() < mutation_rate:
+    if rng.random() < mutation_rate:
         n = len(route)
-        i, j = random.sample(range(1, n), 2)  # skip city 0
+        i, j = rng.sample(range(1, n), 2)  # skip city 0
         route[i], route[j] = route[j], route[i]
     return route
 
 
-def solve_tsp_genetic(cities, population_size=50, generations=100, mutation_rate=0.05):
+def solve_tsp_genetic(cities, population_size=50, generations=100,
+                      mutation_rate=0.05, seed=None):
     """Solve TSP using a Genetic Algorithm.
 
     Uses tournament selection, Order Crossover (OX), swap mutation,
@@ -168,6 +176,9 @@ def solve_tsp_genetic(cities, population_size=50, generations=100, mutation_rate
         population_size: number of routes in the population.
         generations: number of generations to evolve.
         mutation_rate: probability of mutating a child route.
+        seed: random seed. Same seed + same cities = same result
+            (fully reproducible, independent of execution order).
+            None = non-deterministic (old behaviour).
 
     Returns:
         Tuple of (best_route, best_distance, history) where:
@@ -176,9 +187,10 @@ def solve_tsp_genetic(cities, population_size=50, generations=100, mutation_rate
         - history: list of best distances at each generation
     """
     n = len(cities)
+    rng = random.Random(seed) if seed is not None else random
 
     # Step 1: Create initial population
-    population = create_initial_population(n, population_size)
+    population = create_initial_population(n, population_size, rng)
 
     # Track the best solution overall (elitism)
     best_ever_route = None
@@ -209,14 +221,14 @@ def solve_tsp_genetic(cities, population_size=50, generations=100, mutation_rate
         # Fill rest of new population with children
         while len(new_population) < population_size:
             # Select two parents
-            parent1 = tournament_selection(scored)
-            parent2 = tournament_selection(scored)
+            parent1 = tournament_selection(scored, rng=rng)
+            parent2 = tournament_selection(scored, rng=rng)
 
             # Crossover to create child
-            child = order_crossover(parent1, parent2)
+            child = order_crossover(parent1, parent2, rng=rng)
 
             # Mutation
-            child = swap_mutation(child, mutation_rate)
+            child = swap_mutation(child, mutation_rate, rng=rng)
 
             # Validate child
             if is_valid_route(child, n):

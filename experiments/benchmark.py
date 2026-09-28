@@ -33,11 +33,20 @@ HAS_QAOA = True
 BF_LIMIT = 10  # brute-force refused above this N ((N-1)! explosion)
 
 
+def solver_seed_for(map_seed, tag):
+    """Derive a solver RNG seed from the map seed.
+
+    Deterministic per (map, solver): rerunning the benchmark reproduces
+    every run bit-for-bit, independent of execution order or parallelism.
+    """
+    return (map_seed * 31 + hash(tag)) % (2 ** 31)
+
+
 def run_single(n_cities, seed, ga_params):
     """Run BF + GA on one small-N instance. Returns list of record dicts."""
     cities = generate_cities(n=n_cities, seed=seed)
 
-    # Brute-force (exact baseline)
+    # Brute-force (exact baseline, deterministic -> solver_seed -1)
     t0 = time.perf_counter()
     bf_route, bf_dist = solve_tsp_bruteforce(cities)
     bf_time = (time.perf_counter() - t0) * 1000.0
@@ -46,21 +55,25 @@ def run_single(n_cities, seed, ga_params):
         "algorithm": "brute_force",
         "n_cities": n_cities,
         "seed": seed,
+        "solver_seed": -1,
         "distance": float(bf_dist),
         "time_ms": float(bf_time),
         "gap": 0.0,
         "route": "-".join(map(str, bf_route)),
     }]
 
-    # GA runs
+    # GA runs (each with its own derived seed -> reproducible)
     for cfg_name, params in ga_params.items():
+        sseed = solver_seed_for(seed, f"ga_{cfg_name}")
         t0 = time.perf_counter()
-        ga_route, ga_dist, history = solve_tsp_genetic(cities, **params)
+        ga_route, ga_dist, history = solve_tsp_genetic(
+            cities, seed=sseed, **params)
         ga_time = (time.perf_counter() - t0) * 1000.0
         records.append({
             "algorithm": f"ga_{cfg_name}",
             "n_cities": n_cities,
             "seed": seed,
+            "solver_seed": sseed,
             "distance": float(ga_dist),
             "time_ms": float(ga_time),
             "gap": float(optimality_gap(ga_dist, bf_dist)),
@@ -77,42 +90,50 @@ def run_scale_single(n_cities, seed, ga_params, n_restarts=20):
     No optimum exists here, so gap is measured vs the best distance found
     by any method on that instance (gap_vs_best).
     """
+    import random as _random
     cities = generate_cities(n=n_cities, seed=seed)
-    cands = []  # (algorithm, route, distance, time_ms)
+    cands = []  # (algorithm, route, distance, time_ms, solver_seed)
 
     # 1. Pure GA
+    sseed = solver_seed_for(seed, "pure_ga")
     t0 = time.perf_counter()
-    ga_route, ga_dist, _ = solve_tsp_genetic(cities, **ga_params)
+    ga_route, ga_dist, _ = solve_tsp_genetic(
+        cities, seed=sseed, **ga_params)
     cands.append(("pure_ga", ga_route, ga_dist,
-                  (time.perf_counter() - t0) * 1000.0))
+                  (time.perf_counter() - t0) * 1000.0, sseed))
 
     # 2. Memetic (GA + 2-opt polish)
+    sseed_m = solver_seed_for(seed, "memetic")
     t0 = time.perf_counter()
-    m_route, m_dist, info = solve_tsp_memetic(cities, **ga_params)
+    m_route, m_dist, info = solve_tsp_memetic(
+        cities, seed=sseed_m, **ga_params)
     cands.append(("memetic", m_route, m_dist,
-                  (time.perf_counter() - t0) * 1000.0))
+                  (time.perf_counter() - t0) * 1000.0, sseed_m))
 
     # 3. Multi-start 2-opt (random routes, polish each, keep best)
+    sseed_t = solver_seed_for(seed, "two_opt")
+    rng = _random.Random(sseed_t)
     t0 = time.perf_counter()
     best_r, best_d = None, float("inf")
     for _ in range(n_restarts):
-        r = create_random_route(n_cities)
+        r = create_random_route(n_cities, rng)
         r, d, _ = two_opt_improve(cities, r)
         if d < best_d:
             best_r, best_d = r, d
     cands.append((f"two_opt_x{n_restarts}", best_r, best_d,
-                  (time.perf_counter() - t0) * 1000.0))
+                  (time.perf_counter() - t0) * 1000.0, sseed_t))
 
-    ref = min(d for _, _, d, _ in cands)
+    ref = min(d for _, _, d, _, _ in cands)
     records = [{
         "algorithm": algo,
         "n_cities": n_cities,
         "seed": seed,
+        "solver_seed": sseed,
         "distance": float(d),
         "time_ms": float(t),
         "gap_vs_best": float(optimality_gap(d, ref)),
         "route": "-".join(map(str, r)),
-    } for algo, r, d, t in cands]
+    } for algo, r, d, t, sseed in cands]
     return records
 
 
@@ -175,14 +196,16 @@ def main():
                     and HAS_QAOA and n <= MAX_CITIES_EXACT):
                 cities = generate_cities(n=n, seed=seed)
                 _, bf_dist = solve_tsp_bruteforce(cities)
+                sseed_q = solver_seed_for(seed, "qaoa_p2")
                 t0 = time.perf_counter()
                 q_route, q_dist, _ = solve_tsp_qaoa(
-                    cities, depth=2, maxiter=60)
+                    cities, depth=2, maxiter=60, seed=sseed_q)
                 q_time = (time.perf_counter() - t0) * 1000.0
                 all_records.append({
                     "algorithm": "qaoa_p2",
                     "n_cities": n,
                     "seed": seed,
+                    "solver_seed": sseed_q,
                     "distance": float(q_dist),
                     "time_ms": float(q_time),
                     "gap": float(optimality_gap(q_dist, bf_dist)),
