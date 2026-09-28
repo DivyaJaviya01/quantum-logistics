@@ -7,6 +7,8 @@ import time
 # Ensure project root is in python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import math
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -17,6 +19,8 @@ from core.city_generator import generate_cities
 from core.distance import calculate_distance
 from algorithms.tsp_bruteforce import solve_tsp_bruteforce
 from algorithms.genetic_algorithm import solve_tsp_genetic
+from algorithms.memetic import solve_tsp_memetic
+from algorithms.qaoa import solve_tsp_qaoa, MAX_CITIES_EXACT
 
 
 # Page Configuration
@@ -231,6 +235,7 @@ def main():
         [
             "⚡ Brute-Force (Exact)",
             "🧬 Genetic Algorithm (Evolutionary)",
+            "🧬➕ Memetic (GA + 2-opt)",
             "⚛️ QAOA (Quantum Simulation)",
             "📊 Benchmark Comparison (All)",
         ],
@@ -241,7 +246,8 @@ def main():
     ga_generations = 100
     ga_mutation = 0.05
 
-    if "Genetic Algorithm" in algo_choice or "Benchmark" in algo_choice:
+    if ("Genetic Algorithm" in algo_choice or "Memetic" in algo_choice
+            or "Benchmark" in algo_choice):
         with st.sidebar.expander("⚙️ Genetic Algorithm Hyperparameters", expanded=True):
             ga_pop_size = st.slider("Population Size", 10, 200, 50, step=10)
             ga_generations = st.slider("Generations", 20, 500, 100, step=20)
@@ -252,7 +258,7 @@ def main():
         st.subheader("⚡ Brute-Force Solver")
         if num_cities > 11:
             st.warning(
-                f"⚠️ Brute-force evaluates {np.math.factorial(num_cities-1):,} permutations! "
+                f"⚠️ Brute-force evaluates {math.factorial(num_cities-1):,} permutations! "
                 "For N > 11, execution may take several seconds or minutes."
             )
 
@@ -315,23 +321,37 @@ def main():
                 )
             st.dataframe(pd.DataFrame(leg_data), hide_index=True, use_container_width=True)
 
-    elif algo_choice == "🧬 Genetic Algorithm (Evolutionary)":
-        st.subheader("🧬 Genetic Algorithm Solver")
+    elif algo_choice in ("🧬 Genetic Algorithm (Evolutionary)",
+                           "🧬➕ Memetic (GA + 2-opt)"):
+        is_memetic = algo_choice.startswith("🧬➕")
+        st.subheader("🧬➕ Memetic Solver (GA + 2-opt polish)" if is_memetic
+                     else "🧬 Genetic Algorithm Solver")
 
         col_left, col_right = st.columns([3, 2])
 
         start_time = time.time()
-        best_route, best_distance, history = solve_tsp_genetic(
-            cities,
-            population_size=ga_pop_size,
-            generations=ga_generations,
-            mutation_rate=ga_mutation,
-        )
+        polish_gain = 0.0
+        if is_memetic:
+            best_route, best_distance, m_info = solve_tsp_memetic(
+                cities,
+                population_size=ga_pop_size,
+                generations=ga_generations,
+                mutation_rate=ga_mutation,
+            )
+            history = m_info["history"]
+            polish_gain = m_info["polish_gain"]
+        else:
+            best_route, best_distance, history = solve_tsp_genetic(
+                cities,
+                population_size=ga_pop_size,
+                generations=ga_generations,
+                mutation_rate=ga_mutation,
+            )
         exec_time = (time.time() - start_time) * 1000
 
         with col_left:
             fig_map = create_plotly_route_map(
-                cities, best_route, f"GA Optimized Route — Distance: {best_distance:.2f}"
+                cities, best_route, f"Optimized Route — Distance: {best_distance:.2f}"
             )
             st.plotly_chart(fig_map, use_container_width=True)
 
@@ -344,7 +364,7 @@ def main():
                     f"""
                     <div class="metric-card">
                         <div class="metric-value">{best_distance:.2f}</div>
-                        <div class="metric-label">Best GA Distance</div>
+                        <div class="metric-label">Best Distance</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -359,6 +379,9 @@ def main():
                     """,
                     unsafe_allow_html=True,
                 )
+            if is_memetic:
+                st.info(f"✨ 2-opt polish shaved off **{polish_gain:.2f}** "
+                        f"from the raw GA route.")
 
             st.write("")
             st.markdown("#### 📉 Fitness Convergence:")
@@ -395,52 +418,98 @@ def main():
         st.subheader("⚛️ Quantum Approximate Optimization Algorithm (QAOA)")
 
         st.info(
-            "ℹ️ **Quantum-Inspired Solver Status**: QAOA maps the Travelling Salesperson Problem to a QUBO / Ising Hamiltonian. "
-            "Below is a simulated QAOA variational circuit optimization run."
+            "ℹ️ **Real QAOA simulation** (NumPy statevector + COBYLA optimizer, no Qiskit needed). "
+            "TSP is mapped to a QUBO with the depot fixed, needing $(N-1)^2$ qubits. "
+            f"Exact simulation supports N ≤ {MAX_CITIES_EXACT}."
         )
 
-        # Run simulated quantum heuristic solver for demonstration comparison
-        start_time = time.time()
-        # Simulated Quantum Annealing / QAOA heuristic
-        best_route_bf, best_dist_bf = solve_tsp_bruteforce(cities)
-        exec_time = (time.time() - start_time) * 1000 + 45.2  # add circuit compilation simulation time
+        with st.sidebar.expander("⚛️ QAOA Hyperparameters", expanded=True):
+            qaoa_depth = st.slider("Circuit Depth (p)", 1, 4, 2, step=1)
+            qaoa_maxiter = st.slider("Optimizer Iterations", 20, 200, 80, step=20)
 
-        col_left, col_right = st.columns([3, 2])
-
-        with col_left:
-            fig_map = create_plotly_route_map(
-                cities, best_route_bf, f"QAOA Ground State Route — Distance: {best_dist_bf:.2f}"
+        if num_cities > MAX_CITIES_EXACT:
+            st.warning(
+                f"⚠️ QAOA exact simulation supports N ≤ {MAX_CITIES_EXACT} "
+                f"({(MAX_CITIES_EXACT - 1) ** 2} qubits). "
+                f"N={num_cities} would need {(num_cities - 1) ** 2} qubits "
+                f"({2 ** ((num_cities - 1) ** 2):,} amplitudes). "
+                "Reduce the number of cities to run QAOA."
             )
-            st.plotly_chart(fig_map, use_container_width=True)
-
-        with col_right:
-            st.markdown("### ⚛️ Quantum Circuit Parameters")
-            st.markdown("- **Qubits Required**: $N^2 = %d$" % (num_cities**2))
-            st.markdown("- **Circuit Layers ($p$)**: 3")
-            st.markdown("- **Mixer Hamiltonian**: $H_M = \sum X_i$")
-            st.markdown("- **Cost Hamiltonian**: $H_C = \sum d_{ij} x_{i,p} x_{j,p+1} + \lambda \text{Penalties}$")
-
-            m1, m2 = st.columns(2)
-            with m1:
-                st.markdown(
-                    f"""
-                    <div class="metric-card">
-                        <div class="metric-value">{best_dist_bf:.2f}</div>
-                        <div class="metric-label">Min Energy (Distance)</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+        else:
+            with st.spinner("🔬 Optimizing QAOA variational parameters..."):
+                start_time = time.time()
+                best_route_q, best_dist_q, q_info = solve_tsp_qaoa(
+                    cities, depth=qaoa_depth, maxiter=qaoa_maxiter
                 )
-            with m2:
-                st.markdown(
-                    f"""
-                    <div class="metric-card">
-                        <div class="metric-value">{exec_time:.2f} ms</div>
-                        <div class="metric-label">Simulated Shot Time</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+                exec_time = (time.time() - start_time) * 1000
+
+            # Exact optimum for reference (cheap at N<=5)
+            _, best_dist_bf = solve_tsp_bruteforce(cities)
+            gap = (best_dist_q - best_dist_bf) / best_dist_bf * 100
+
+            col_left, col_right = st.columns([3, 2])
+
+            with col_left:
+                fig_map = create_plotly_route_map(
+                    cities, best_route_q, f"QAOA Ground State Route — Distance: {best_dist_q:.2f}"
                 )
+                st.plotly_chart(fig_map, use_container_width=True)
+
+            with col_right:
+                st.markdown("### ⚛️ Quantum Circuit Parameters")
+                st.markdown("- **Qubits Used**: $(N-1)^2 = %d$" % q_info["qubits"])
+                st.markdown("- **Circuit Layers ($p$)**: %d" % q_info["depth"])
+                st.markdown("- **Mixer Hamiltonian**: $H_M = \\sum X_i$")
+                st.markdown("- **Cost Hamiltonian**: $H_C = \\sum d_{ij} x_{i,p} x_{j,p+1} + \\lambda \\text{Penalties}$")
+                st.markdown("- **Top-state probability**: %.4f" % q_info["top_prob"])
+                st.markdown("- **Optimality gap**: %.2f%%" % gap)
+
+                # Optimizer convergence
+                fig_hist = go.Figure()
+                fig_hist.add_trace(
+                    go.Scatter(
+                        y=q_info["history"], mode="lines+markers",
+                        line=dict(color="#a855f7", width=2),
+                        name="Mean energy <H_C>",
+                    )
+                )
+                fig_hist.update_layout(
+                    title="QAOA optimizer convergence",
+                    xaxis_title="COBYLA iteration",
+                    yaxis_title="Energy",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(15, 23, 42, 0.6)",
+                    font=dict(color="#94a3b8"),
+                    height=250,
+                    margin=dict(l=40, r=40, t=40, b=40),
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
+
+                m1, m2 = st.columns(2)
+                with m1:
+                    st.markdown(
+                        f"""
+                        <div class="metric-card">
+                            <div class="metric-value">{best_dist_q:.2f}</div>
+                            <div class="metric-label">QAOA Distance</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                with m2:
+                    st.markdown(
+                        f"""
+                        <div class="metric-card">
+                            <div class="metric-value">{exec_time:.0f} ms</div>
+                            <div class="metric-label">Sim Time</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                st.markdown("#### 🔄 Route Order:")
+                route_str = " ➔ ".join([f"**City {c+1}**" for c in best_route_q]) + f" ➔ **City {best_route_q[0]+1}**"
+                st.info(route_str)
 
     elif algo_choice == "📊 Benchmark Comparison (All)":
         st.subheader("📊 Solver Benchmark Comparison")
@@ -471,31 +540,47 @@ def main():
             )
             st.plotly_chart(fig_ga, use_container_width=True)
 
-        # Summary Benchmark Data Table
-        st.markdown("### 🏆 Performance Breakdown")
-        df_bench = pd.DataFrame(
-            [
-                {
-                    "Algorithm": "⚡ Brute-Force",
-                    "Best Distance": round(dist_bf, 2),
-                    "Execution Time (ms)": round(time_bf, 2),
-                    "Optimality Guarantee": "100% (Global Optimum)",
-                },
-                {
-                    "Algorithm": "🧬 Genetic Algorithm",
-                    "Best Distance": round(dist_ga, 2),
-                    "Execution Time (ms)": round(time_ga, 2),
-                    "Optimality Guarantee": f"{min(100.0, (dist_bf/dist_ga)*100):.1f}% Approx.",
-                },
+        # Real QAOA when simulable, else mark as N/A
+        rows = [
+            {
+                "Algorithm": "⚡ Brute-Force",
+                "Best Distance": round(dist_bf, 2),
+                "Execution Time (ms)": round(time_bf, 2),
+                "Optimality Guarantee": "100% (Global Optimum)",
+            },
+            {
+                "Algorithm": "🧬 Genetic Algorithm",
+                "Best Distance": round(dist_ga, 2),
+                "Execution Time (ms)": round(time_ga, 2),
+                "Optimality Guarantee": f"{min(100.0, (dist_bf/dist_ga)*100):.1f}% Approx.",
+            },
+        ]
+        if num_cities <= MAX_CITIES_EXACT:
+            with st.spinner("🔬 Running QAOA for benchmark..."):
+                start_q = time.time()
+                _, dist_q, _ = solve_tsp_qaoa(cities, depth=2, maxiter=60)
+                time_q = (time.time() - start_q) * 1000
+            rows.append(
                 {
                     "Algorithm": "⚛️ QAOA (Quantum Sim)",
-                    "Best Distance": round(dist_bf, 2),
-                    "Execution Time (ms)": round(time_bf + 45.2, 2),
-                    "Optimality Guarantee": "Probabilistic State Sampling",
-                },
-            ]
-        )
-        st.dataframe(df_bench, hide_index=True, use_container_width=True)
+                    "Best Distance": round(dist_q, 2),
+                    "Execution Time (ms)": round(time_q, 2),
+                    "Optimality Guarantee": f"{min(100.0, (dist_bf/dist_q)*100):.1f}% Approx.",
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "Algorithm": "⚛️ QAOA (Quantum Sim)",
+                    "Best Distance": "N/A (N>5)",
+                    "Execution Time (ms)": "N/A",
+                    "Optimality Guarantee": "Needs real quantum hardware",
+                }
+            )
+
+        # Summary Benchmark Data Table
+        st.markdown("### 🏆 Performance Breakdown")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
     # Footer
     st.divider()
