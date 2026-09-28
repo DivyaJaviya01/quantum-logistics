@@ -100,6 +100,11 @@ def test_qaoa_valid_and_guarded():
     assert is_valid_route(route, 4)
     assert info["qubits"] == 9
     assert dist == calculate_distance(cities, route)
+    # Diagnostics are proper probabilities with sane ordering
+    assert 0.0 <= info["p_optimal"] <= info["p_feasible"] <= 1.0
+    assert info["gap_vs_optimal"] >= -1e-9
+    assert abs(info["gap_vs_optimal"]
+               - (dist - info["bf_distance"]) / info["bf_distance"] * 100) < 1e-6
     # Decode always repairs to a valid route
     for k in [0, 1, 123, 511]:
         assert is_valid_route(decode_bitstring(k, 4), 4)

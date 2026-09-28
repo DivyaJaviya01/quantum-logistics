@@ -20,6 +20,14 @@ from core.distance import calculate_distance
 MAX_CITIES_EXACT = 5
 
 
+def _bit_matrix(n_qubits):
+    """All 2^n bitstrings as a (2^n, n) 0/1 float matrix."""
+    size = 1 << n_qubits
+    ints = np.arange(size, dtype=np.int64)[:, None]
+    shifts = np.arange(n_qubits, dtype=np.int64)[None, :]
+    return ((ints >> shifts) & 1)
+
+
 # ---------------------------------------------------------------------------
 # QUBO formulation (depot fixed)
 # ---------------------------------------------------------------------------
@@ -56,10 +64,8 @@ def build_qubo_energies(cities, penalty=None):
 
     # Bit matrix: rows = all 2^n_qubits bitstrings, cols = qubits.
     # Qubit q corresponds to city i = q % m + 1, position p = q // m + 1.
-    size = 1 << n_qubits
-    ints = np.arange(size, dtype=np.int64)[:, None]
-    shifts = np.arange(n_qubits, dtype=np.int64)[None, :]
-    bits = ((ints >> shifts) & 1).astype(float)  # (size, n_qubits)
+    bits = _bit_matrix(n_qubits).astype(float)  # (size, n_qubits)
+    size = bits.shape[0]
 
     # Reshape to X[k, i, p] with i, p in 0..m-1 (= city i+1, position p+1)
     X = bits.reshape(size, m, m).transpose(0, 2, 1)  # X[k, pos, city]
@@ -216,6 +222,23 @@ def solve_tsp_qaoa(cities, depth=2, penalty=None, maxiter=80, seed=42,
         if d < best_dist:
             best_dist, best_route = d, route
 
+    # --- Diagnostics: what does the quantum state actually hold? ---
+    # The X-mixer does NOT preserve feasible tours, so probability leaks
+    # onto invalid bitstrings (which the decoder repairs). Measure it.
+    from algorithms.tsp_bruteforce import solve_tsp_bruteforce
+    _, bf_dist = solve_tsp_bruteforce(cities)  # trivial at N<=5
+    m = n - 1
+    Xall = _bit_matrix(n_qubits).reshape(-1, m, m).transpose(0, 2, 1)
+    feasible_mask = ((Xall.sum(axis=2) == 1).all(axis=1)
+                     & (Xall.sum(axis=1) == 1).all(axis=1))
+    p_feasible = float(probs[feasible_mask].sum())
+    # P(optimal): decode each exactly-feasible bitstring (only m! of them)
+    p_optimal = 0.0
+    for k in np.where(feasible_mask)[0]:
+        if abs(calculate_distance(cities, decode_bitstring(int(k), n))
+               - bf_dist) < 1e-9:
+            p_optimal += float(probs[k])
+
     info = {
         "qubits": n_qubits,
         "depth": depth,
@@ -225,5 +248,9 @@ def solve_tsp_qaoa(cities, depth=2, penalty=None, maxiter=80, seed=42,
         "expectation": float(result.fun),
         "history": history,
         "top_prob": float(probs[top[0]]),
+        "p_feasible": p_feasible,
+        "p_optimal": p_optimal,
+        "bf_distance": float(bf_dist),
+        "gap_vs_optimal": float((best_dist - bf_dist) / bf_dist * 100.0),
     }
     return best_route, best_dist, info
